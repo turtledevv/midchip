@@ -1,5 +1,5 @@
 """
-midchip.viz CLI | realtime oscilloscope visualization for MidChip.
+midchip.viz __main__ | realtime oscilloscope visualization for MidChip.
 ----------
 
 Usage:
@@ -24,7 +24,7 @@ from .render import LyricTrack
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="midchip_viz",
+        prog="midchip.viz",
         description="Real-time oscilloscope visualization of a MIDI file "
                      "being chiptune-synthesized.",
     )
@@ -53,6 +53,19 @@ def _progress(i: int, total: int) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # I don't even..
+    print(
+        "\033[38;2;255;152;238m\033[1m" + r"            _     _"+"\033[38;2;48;244;140m"+r"      _     _       "+"\n"
+        "\033[38;2;255;152;238m" + r"           (_)   | |"+"\033[38;2;48;244;140m"+r"    | |   (_)      "+"\n"
+        "\033[38;2;255;137;235m" + r"  _ __ ___  _  __| |"+"\033[38;2;36;234;129m"+r" ___| |__  _ _ __  "+"\n"
+        "\033[38;2;255;137;235m" + r" | '_ ` _ \| |/ _` |"+"\033[38;2;36;234;129m"+r"/ __| '_ \| | '_ \ "+"\n"
+        "\033[38;2;255;107;229m" + r" | | | | | | | (_| |"+"\033[38;2;18;204;106m"+r" (__| | | | | |_) |"+"\n"
+        "\033[38;2;255;107;229m" + r" |_| |_| |_|_|\__,_|"+"\033[38;2;18;204;106m"+r"\___|_| |_|_| .__/ "+"\n"
+        "\033[0;31m\033[1m" + "   viz                          \033[38;2;26;221;118m| |    "+"\n"
+        "\033[38;2;255;92;226m" + f"      \033[0m\033[0;37m\033[3m{VERSION}\033[0m\033[1m\033[0;34m\033[1m\033[38;2;26;221;118m" + r"                    |_|    " + "\033[0m"+"\n"
+        # "\n\033[0m\033[3m\"Insert sick splash text here\""+"\n"
+        "\033[1m\033[2m-----------------------------------------\n\033[0m"
+    )
     args = build_parser().parse_args(argv)
     disabled = parse_disabled(args.disable)
     substitutions = parse_substitutions(args.substitute)
@@ -93,18 +106,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    # I don't even..
-    print(
-        "\033[38;2;255;152;238m\033[1m" + r"            _     _"+"\033[38;2;48;244;140m"+r"      _     _       "+"\n"
-        "\033[38;2;255;152;238m" + r"           (_)   | |"+"\033[38;2;48;244;140m"+r"    | |   (_)      "+"\n"
-        "\033[38;2;255;137;235m" + r"  _ __ ___  _  __| |"+"\033[38;2;36;234;129m"+r" ___| |__  _ _ __  "+"\n"
-        "\033[38;2;255;137;235m" + r" | '_ ` _ \| |/ _` |"+"\033[38;2;36;234;129m"+r"/ __| '_ \| | '_ \ "+"\n"
-        "\033[38;2;255;107;229m" + r" | | | | | | | (_| |"+"\033[38;2;18;204;106m"+r" (__| | | | | |_) |"+"\n"
-        "\033[38;2;255;107;229m" + r" |_| |_| |_|_|\__,_|"+"\033[38;2;18;204;106m"+r"\___|_| |_|_| .__/ "+"\n"
-        "\033[0;31m\033[1m" + "   viz                          \033[38;2;26;221;118m| |    "+"\n"
-        "\033[38;2;255;92;226m" + f"      \033[0m\033[0;37m\033[3m{VERSION}\033[0m\033[1m\033[0;34m\033[1m\033[38;2;26;221;118m" + r"                    |_|    " + "\033[0m"+"\n"
-        # "\n\033[0m\033[3m\"Insert sick splash text here\""+"\n"
-        "\033[1m\033[2m-----------------------------------------\n\033[0m"
-    )
-
     main()

@@ -1,0 +1,79 @@
+name: Build binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: midchip-linux
+          - os: macos-latest
+            asset_name: midchip-macos
+          - os: windows-latest
+            asset_name: midchip-windows
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        shell: bash
+
+      - name: Build bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: bash scripts/build.sh
+
+      - name: Build bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\build.bat
+
+      - name: Verify expected outputs exist
+        run: |
+          set -e
+          ls -la dist/midchip-bundle
+          test -f dist/midchip-bundle/README.md
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            test -f dist/midchip-bundle/midchip.exe
+            test -f dist/midchip-bundle/midchip-viz.exe
+            test -f dist/midchip-bundle/midchip-gui.exe
+          else
+            test -f dist/midchip-bundle/midchip
+            test -f dist/midchip-bundle/midchip-viz
+            test -f dist/midchip-bundle/midchip-gui
+            test -x dist/midchip-bundle/midchip
+            test -x dist/midchip-bundle/midchip-viz
+            test -x dist/midchip-bundle/midchip-gui
+          fi
+        shell: bash
+
+      - name: Zip the bundle
+        run: |
+          cd dist
+          7z a -tzip "${{ matrix.asset_name }}.zip" midchip-bundle
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}.zip
+          if-no-files-found: error

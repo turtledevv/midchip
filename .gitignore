@@ -69,6 +69,8 @@ htmlcov/
 .directory
 *.kate-swp
 *.kate-swp.*
+.kateproject.*
+*.kateproject.*
 
 # Swap files
 *.swp

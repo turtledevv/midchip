@@ -16,6 +16,8 @@ def _supports_color(stream) -> bool:
         return False
     if os.environ.get("FORCE_COLOR") is not None:
         return True
+    if os.environ.get("MIDCHIP_GUI") is not None:
+        return True
     if not hasattr(stream, "isatty") or not stream.isatty():
         return False
     if sys.platform == "win32":

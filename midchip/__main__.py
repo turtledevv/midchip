@@ -1,5 +1,5 @@
 """
-midchip CLI | render a MIDI file to chiptune audio.
+midchip __main__ | render a MIDI file to chiptune audio.
 ----------
 
 Usage:
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 import wave
+import os
 
 from . import ui
 from .cli_common import add_common_args, parse_disabled, parse_substitutions, get_chip
@@ -50,6 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # I'm not religious; but please forgive me for I have sinned.
+    # Don't even try to read this.
+    # Leave it alone; and never touch it again.
+    # This goes for me and all future maintainers.
+    #                    - Thanks for understanding, from the dipshit who coded this
+    print(
+        "\033[38;2;255;152;238m\033[1m" + r"            _     _"+"\033[38;2;48;244;140m"+r"      _     _       "+"\n"
+        "\033[38;2;255;152;238m" + r"           (_)   | |"+"\033[38;2;48;244;140m"+r"    | |   (_)      "+"\n"
+        "\033[38;2;255;137;235m" + r"  _ __ ___  _  __| |"+"\033[38;2;36;234;129m"+r" ___| |__  _ _ __  "+"\n"
+        "\033[38;2;255;137;235m" + r" | '_ ` _ \| |/ _` |"+"\033[38;2;36;234;129m"+r"/ __| '_ \| | '_ \ "+"\n"
+        "\033[38;2;255;107;229m" + r" | | | | | | | (_| |"+"\033[38;2;18;204;106m"+r" (__| | | | | |_) |"+"\n"
+        "\033[38;2;255;107;229m" + r" |_| |_| |_|_|\__,_|"+"\033[38;2;18;204;106m"+r"\___|_| |_|_| .__/ "+"\n"
+        "\033[38;2;26;221;118m" + r"                                | |    "+"\n"
+        "\033[38;2;255;92;226m" + f"      \033[0m\033[0;37m\033[3m{VERSION}\033[0m\033[1m\033[0;34m\033[1m\033[38;2;26;221;118m" + r"                    |_|    " + "\033[0m"+"\n"
+        # "\n\033[0m\033[3m\"Insert sick splash text here\""+"\n"
+        "\033[1m\033[2m-----------------------------------------\n\033[0m"
+    )
+
     args = build_parser().parse_args(argv)
     disabled = parse_disabled(args.disable)
     substitutions = parse_substitutions(args.substitute)
@@ -87,7 +106,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if should_play:
         from .playback import play as play_audio
-        ui.info("Playing... (Ctrl+C to stop)")
+
+        if os.environ.get("MIDCHIP_GUI") is not None:
+            ui.info("Playing... (Click Exit to stop)")
+        else:
+            ui.info("Playing... (Ctrl+C to stop)")
+
         try:
             play_audio(audio, rate=SAMPLE_RATE, blocking=True)
         except KeyboardInterrupt:
@@ -95,23 +119,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    # I'm not religious; but please forgive me for I have sinned.
-    # Don't even try to read this.
-    # Leave it alone; and never touch it again.
-    # This goes for me and all future maintainers.
-    #                    - Thanks for understanding, from the dipshit who coded this
-
-    print(
-        "\033[38;2;255;152;238m\033[1m" + r"            _     _"+"\033[38;2;48;244;140m"+r"      _     _       "+"\n"
-        "\033[38;2;255;152;238m" + r"           (_)   | |"+"\033[38;2;48;244;140m"+r"    | |   (_)      "+"\n"
-        "\033[38;2;255;137;235m" + r"  _ __ ___  _  __| |"+"\033[38;2;36;234;129m"+r" ___| |__  _ _ __  "+"\n"
-        "\033[38;2;255;137;235m" + r" | '_ ` _ \| |/ _` |"+"\033[38;2;36;234;129m"+r"/ __| '_ \| | '_ \ "+"\n"
-        "\033[38;2;255;107;229m" + r" | | | | | | | (_| |"+"\033[38;2;18;204;106m"+r" (__| | | | | |_) |"+"\n"
-        "\033[38;2;255;107;229m" + r" |_| |_| |_|_|\__,_|"+"\033[38;2;18;204;106m"+r"\___|_| |_|_| .__/ "+"\n"
-        "\033[38;2;26;221;118m" + r"                                | |    "+"\n"
-        "\033[38;2;255;92;226m" + f"      \033[0m\033[0;37m\033[3m{VERSION}\033[0m\033[1m\033[0;34m\033[1m\033[38;2;26;221;118m" + r"                    |_|    " + "\033[0m"+"\n"
-        # "\n\033[0m\033[3m\"Insert sick splash text here\""+"\n"
-        "\033[1m\033[2m-----------------------------------------\n\033[0m"
-    )
-
     main()
