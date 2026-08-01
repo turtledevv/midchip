@@ -1,0 +1,132 @@
+# =========================
+# midchip specific (for my local dev environment)
+# =========================
+midchip-archives/
+midchip-beta/
+
+# =========================
+# Python
+# =========================
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg
+*.egg-info/
+wheels/
+pip-wheel-metadata/
+
+# PyInstaller
+*.manifest
+*.spec
+*.pyz
+*.pyzw
+
+# Coverage / testing
+.coverage
+.coverage.*
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+
+# Type checking / linting
+.mypy_cache/
+.dmypy.json
+.pyre/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Kate / KDE
+# =========================
+
+# Kate local settings
+.kateconfig
+.kateproject
+
+# KDE metadata
+.directory
+*.kate-swp
+*.kate-swp.*
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# =========================
+# Linux
+# =========================
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Backup files
+*.bak
+*.old
+*.orig
+
+# KDE/GNOME trash
+.Trash-*
+.Trash/
+
+# File manager metadata
+.directory
+
+# =========================
+# IDE / Editor extras
+# =========================
+
+# VS Code (in case someone commits from another editor)
+.vscode/
+
+# JetBrains
+.idea/
+
+# =========================
+# Environment / secrets
+# =========================
+
+.env
+.env.*
+!.env.example
+
+# =========================
+# Build / generated output
+# =========================
+
+.cache/
+tmp/
+temp/
+out/
+output/
+
+# =========================
+# OS-specific
+# =========================
+
+.DS_Store
+Thumbs.db
