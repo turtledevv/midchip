@@ -14,7 +14,16 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
-from midchip.cli_common import ALL_WAVES, CHIP_PROFILES
+from midchip.cli_common import (
+    ALL_WAVES, CHIP_PROFILES, MASTER_VOLUME,
+    REVERB_MIX, REVERB_DECAY, VIBRATO_RATE_HZ, VIBRATO_DEPTH_SEMITONES,
+)
+from midchip import FPS
+
+# Mirrors midchip.viz.app's own defaults; not imported directly so this
+# launcher doesn't pick up a pygame dependency just to read two numbers.
+VIZ_DEFAULT_WIDTH = 1280
+VIZ_DEFAULT_HEIGHT = 720
 
 ANSI_PATTERN = re.compile(r"\x1b\[([0-9;]*)m")
 
@@ -585,7 +594,7 @@ class Terminal(tk.Frame):
 
 class MidchipTab(ttk.Frame):
     def __init__(self, parent, module: str, launch, stop, settings: Settings):
-        super().__init__(parent, padding=16)
+        super().__init__(parent)
 
         self.module = module
         self.launch_callback = launch
@@ -595,30 +604,111 @@ class MidchipTab(ttk.Frame):
 
         self.midi = tk.StringVar(value=self._saved.get("midi", ""))
         self.chip = tk.StringVar(value=self._saved.get("chip", NO_CHIP))
+        self.no_chip_limits = tk.BooleanVar(value=self._saved.get("no_chip_limits", False))
 
         self.reverb = tk.BooleanVar(value=self._saved.get("reverb", False))
         self.vibrato = tk.BooleanVar(value=self._saved.get("vibrato", False))
         self.stereo = tk.BooleanVar(value=self._saved.get("stereo", True))
 
+        self.volume = tk.DoubleVar(value=self._saved.get("volume", MASTER_VOLUME))
+
         self.substitute = tk.StringVar(value=self._saved.get("substitute", ""))
 
         self.unison = tk.IntVar(value=self._saved.get("unison", 1))
-        self.detune = tk.IntVar(value=self._saved.get("detune", 1))
+        self.detune = tk.DoubleVar(value=self._saved.get("detune", 8.0))
         self.workers = tk.IntVar(value=self._saved.get("workers", 0))
 
         self.no_dither = tk.BooleanVar(value=self._saved.get("no_dither", False))
+        self.no_rms_fix = tk.BooleanVar(value=self._saved.get("no_rms_fix", False))
+        self.seed = tk.StringVar(value=self._saved.get("seed", ""))
+
+        self.attack = tk.StringVar(value=self._saved.get("attack", ""))
+        self.release = tk.StringVar(value=self._saved.get("release", ""))
+
+        self.normalize_target = tk.DoubleVar(value=self._saved.get("normalize_target", 0.35))
+        self.limiter_threshold = tk.DoubleVar(value=self._saved.get("limiter_threshold", 0.7))
+
+        self.reverb_mix = tk.DoubleVar(value=self._saved.get("reverb_mix", REVERB_MIX))
+        self.reverb_decay = tk.DoubleVar(value=self._saved.get("reverb_decay", REVERB_DECAY))
+
+        self.vibrato_depth = tk.DoubleVar(
+            value=self._saved.get("vibrato_depth", VIBRATO_DEPTH_SEMITONES)
+        )
+        self.vibrato_rate = tk.DoubleVar(
+            value=self._saved.get("vibrato_rate", VIBRATO_RATE_HZ)
+        )
+
+        # -- output / export (module-specific: "midchip" renders a .wav,
+        # "midchip.viz" either plays live or exports a .mp4) --------------
+        self.output = tk.StringVar(value=self._saved.get("output", ""))
+        self.play = tk.BooleanVar(value=self._saved.get("play", False))
+        self.export = tk.StringVar(value=self._saved.get("export", ""))
+        self.width = tk.IntVar(value=self._saved.get("width", VIZ_DEFAULT_WIDTH))
+        self.height = tk.IntVar(value=self._saved.get("height", VIZ_DEFAULT_HEIGHT))
+        self.fps = tk.IntVar(value=self._saved.get("fps", FPS))
 
         self.recent_files: list[str] = self._saved.get("recent_files", [])
 
         self.advanced_open = False
 
-        self.columnconfigure(0, weight=1)
+        # -- scrollable body -------------------------------------------
+        # there are enough option rows now (esp. with Advanced open) that
+        # this can run taller than the window; wrap everything in a
+        # canvas + scrollbar instead of letting it get clipped.
+        self.canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
+        vscroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vscroll.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
+
+        self.inner = ttk.Frame(self.canvas, padding=16)
+        self._inner_window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfig(self._inner_window, width=e.width),
+        )
+
+        self.inner.columnconfigure(0, weight=1)
         self._build()
+
+        # bind the wheel directly on every widget in the tab instead of the
+        # canvas itself: self.inner (and everything inside it) is a real
+        # widget stacked on top of the canvas, so Enter/Leave land on
+        # whichever of *those* is under the cursor, not on the canvas -
+        # the canvas basically never sees the mouse, so a canvas-only
+        # binding never fires.
+        self._bind_mousewheel_recursive(self.inner)
+
+    def _bind_mousewheel_recursive(self, widget):
+        # skip widgets that already scroll themselves on the wheel (the
+        # wave-disable listbox and its own scrollbar) so we don't fight
+        # their native behavior.
+        if not isinstance(widget, (tk.Listbox, ttk.Scrollbar)):
+            widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+            widget.bind("<Button-4>", self._on_mousewheel, add="+")
+            widget.bind("<Button-5>", self._on_mousewheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_mousewheel_recursive(child)
+
+    def _on_mousewheel(self, event):
+        if event.num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(1, "units")
+        else:
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _build(self):
         row = 0
 
-        input_frame = ttk.Labelframe(self, text="Input", padding=12)
+        input_frame = ttk.Labelframe(self.inner, text="Input", padding=12)
         input_frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         input_frame.columnconfigure(1, weight=1)
         row += 1
@@ -640,8 +730,54 @@ class MidchipTab(ttk.Frame):
             state="readonly",
         ).grid(row=1, column=1, columnspan=2, sticky="ew", padx=8)
 
-        options_frame = ttk.Labelframe(self, text="Options", padding=12)
+        ttk.Checkbutton(
+            input_frame, text="No channel limits (ignore chip's polyphony cap)",
+            variable=self.no_chip_limits,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        output_frame = ttk.Labelframe(self.inner, text="Output", padding=12)
+        output_frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        output_frame.columnconfigure(1, weight=1)
+        row += 1
+
+        if self.module == "midchip.viz":
+            ttk.Label(output_frame, text="Export video").grid(row=0, column=0, sticky="w", pady=4)
+            ttk.Entry(output_frame, textvariable=self.export).grid(
+                row=0, column=1, sticky="ew", padx=8
+            )
+            ttk.Button(
+                output_frame, text="Browse...", command=self._pick_export
+            ).grid(row=0, column=2)
+            ttk.Label(
+                output_frame, text="Leave blank to open a live window instead",
+                style="Muted.TLabel",
+            ).grid(row=1, column=1, sticky="w", padx=8)
+
+            for r, text, var, lo, hi in (
+                (2, "Width", self.width, 64, 7680),
+                (3, "Height", self.height, 64, 4320),
+                (4, "FPS", self.fps, 1, 240),
+            ):
+                ttk.Label(output_frame, text=text).grid(row=r, column=0, sticky="w", pady=4)
+                ttk.Spinbox(
+                    output_frame, textvariable=var, from_=lo, to=hi, width=8
+                ).grid(row=r, column=1, sticky="w", padx=8)
+        else:
+            ttk.Label(output_frame, text="Save to .wav").grid(row=0, column=0, sticky="w", pady=4)
+            ttk.Entry(output_frame, textvariable=self.output).grid(
+                row=0, column=1, sticky="ew", padx=8
+            )
+            ttk.Button(
+                output_frame, text="Browse...", command=self._pick_output
+            ).grid(row=0, column=2)
+            ttk.Checkbutton(
+                output_frame, text="Play back audio (always on if no file is saved)",
+                variable=self.play,
+            ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        options_frame = ttk.Labelframe(self.inner, text="Options", padding=12)
         options_frame.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        options_frame.columnconfigure(3, weight=1)
         row += 1
 
         for i, (text, var) in enumerate(
@@ -655,13 +791,19 @@ class MidchipTab(ttk.Frame):
                 row=0, column=i, sticky="w", padx=(0 if i == 0 else 16, 0)
             )
 
+        ttk.Label(options_frame, text="Volume").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Spinbox(
+            options_frame, textvariable=self.volume, from_=0.0, to=1.0,
+            increment=0.05, width=6,
+        ).grid(row=1, column=1, sticky="w", padx=8, pady=(8, 0))
+
         self.advanced_btn = ttk.Button(
-            self, text="\u25b6  Advanced options", command=self._toggle_advanced
+            self.inner, text="\u25b6  Advanced options", command=self._toggle_advanced
         )
         self.advanced_btn.grid(row=row, column=0, sticky="w")
         row += 1
 
-        self.advanced = ttk.Labelframe(self, text="Advanced", padding=12)
+        self.advanced = ttk.Labelframe(self.inner, text="Advanced", padding=12)
         self.advanced.columnconfigure(1, weight=1)
         self._advanced_row = row
         row += 1
@@ -701,22 +843,60 @@ class MidchipTab(ttk.Frame):
 
         for r, text, var, lo, hi in (
             (2, "Unison", self.unison, 1, 8),
-            (3, "Detune", self.detune, 1, 100),
-            (4, "Workers", self.workers, 0, 32),
+            (3, "Workers", self.workers, 0, 32),
         ):
             ttk.Label(self.advanced, text=text).grid(row=r, column=0, sticky="w", pady=4)
             ttk.Spinbox(
                 self.advanced, textvariable=var, from_=lo, to=hi, width=6
             ).grid(row=r, column=1, sticky="w", padx=8)
 
+        for r, text, var, lo, hi, inc in (
+            (4, "Detune (cents)", self.detune, 0.0, 100.0, 0.5),
+            (5, "Normalize target", self.normalize_target, 0.0, 2.0, 0.05),
+            (6, "Limiter threshold", self.limiter_threshold, 0.0, 1.0, 0.05),
+            (7, "Reverb mix", self.reverb_mix, 0.0, 1.0, 0.05),
+            (8, "Reverb decay", self.reverb_decay, 0.0, 0.95, 0.05),
+            (9, "Vibrato depth (semitones)", self.vibrato_depth, 0.0, 12.0, 0.05),
+            (10, "Vibrato rate (Hz)", self.vibrato_rate, 0.0, 20.0, 0.1),
+        ):
+            ttk.Label(self.advanced, text=text).grid(row=r, column=0, sticky="w", pady=4)
+            ttk.Spinbox(
+                self.advanced, textvariable=var, from_=lo, to=hi, increment=inc, width=8
+            ).grid(row=r, column=1, sticky="w", padx=8)
+
+        ttk.Label(self.advanced, text="Attack (s, blank=default)").grid(
+            row=11, column=0, sticky="w", pady=4
+        )
+        ttk.Entry(self.advanced, textvariable=self.attack, width=10).grid(
+            row=11, column=1, sticky="w", padx=8
+        )
+
+        ttk.Label(self.advanced, text="Release (s, blank=default)").grid(
+            row=12, column=0, sticky="w", pady=4
+        )
+        ttk.Entry(self.advanced, textvariable=self.release, width=10).grid(
+            row=12, column=1, sticky="w", padx=8
+        )
+
+        ttk.Label(self.advanced, text="Seed (blank=random)").grid(
+            row=13, column=0, sticky="w", pady=4
+        )
+        ttk.Entry(self.advanced, textvariable=self.seed, width=10).grid(
+            row=13, column=1, sticky="w", padx=8
+        )
+
         ttk.Checkbutton(
             self.advanced, text="No dithering", variable=self.no_dither
-        ).grid(row=5, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=14, column=0, sticky="w", pady=(8, 0))
+
+        ttk.Checkbutton(
+            self.advanced, text="No per-note RMS fix", variable=self.no_rms_fix
+        ).grid(row=15, column=0, sticky="w", pady=(4, 0))
 
         if self._saved.get("advanced_open"):
             self._toggle_advanced()
 
-        button_row = ttk.Frame(self)
+        button_row = ttk.Frame(self.inner)
         button_row.grid(row=row, column=0, sticky="ew", pady=(16, 0))
         row += 1
 
@@ -756,6 +936,22 @@ class MidchipTab(ttk.Frame):
         if path:
             self.midi.set(path)
 
+    def _pick_output(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".wav",
+            filetypes=[("WAV audio", "*.wav"), ("All files", "*.*")],
+        )
+        if path:
+            self.output.set(path)
+
+    def _pick_export(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".mp4",
+            filetypes=[("MP4 video", "*.mp4"), ("All files", "*.*")],
+        )
+        if path:
+            self.export.set(path)
+
     def _remember_file(self, path: str):
         self.recent_files = [path] + [p for p in self.recent_files if p != path]
         self.recent_files = self.recent_files[:MAX_RECENT_FILES]
@@ -789,6 +985,9 @@ class MidchipTab(ttk.Frame):
         if self.chip.get() != NO_CHIP:
             cmd += ["--chip", self.chip.get()]
 
+        if self.no_chip_limits.get():
+            cmd.append("--no-chip-channel-limits")
+
         if self.reverb.get():
             cmd.append("--reverb")
 
@@ -797,6 +996,9 @@ class MidchipTab(ttk.Frame):
 
         if not self.stereo.get():
             cmd.append("--mono")
+
+        if self.volume.get() != MASTER_VOLUME:
+            cmd += ["--volume", str(self.volume.get())]
 
         disabled = [self.disable.get(i) for i in self.disable.curselection()]
         if disabled:
@@ -808,7 +1010,7 @@ class MidchipTab(ttk.Frame):
         if self.unison.get() != 1:
             cmd += ["--unison", str(self.unison.get())]
 
-        if self.detune.get() != 1:
+        if self.detune.get() != 8.0:
             cmd += ["--detune", str(self.detune.get())]
 
         if self.workers.get():
@@ -817,6 +1019,51 @@ class MidchipTab(ttk.Frame):
         if self.no_dither.get():
             cmd.append("--no-dither")
 
+        if self.no_rms_fix.get():
+            cmd.append("--no-rms-fix")
+
+        if self.seed.get().strip():
+            cmd += ["--seed", self.seed.get().strip()]
+
+        if self.attack.get().strip():
+            cmd += ["--attack", self.attack.get().strip()]
+
+        if self.release.get().strip():
+            cmd += ["--release", self.release.get().strip()]
+
+        if self.normalize_target.get() != 0.35:
+            cmd += ["--normalize-target", str(self.normalize_target.get())]
+
+        if self.limiter_threshold.get() != 0.7:
+            cmd += ["--limiter-threshold", str(self.limiter_threshold.get())]
+
+        if self.reverb_mix.get() != REVERB_MIX:
+            cmd += ["--reverb-mix", str(self.reverb_mix.get())]
+
+        if self.reverb_decay.get() != REVERB_DECAY:
+            cmd += ["--reverb-decay", str(self.reverb_decay.get())]
+
+        if self.vibrato_depth.get() != VIBRATO_DEPTH_SEMITONES:
+            cmd += ["--vibrato-depth", str(self.vibrato_depth.get())]
+
+        if self.vibrato_rate.get() != VIBRATO_RATE_HZ:
+            cmd += ["--vibrato-rate", str(self.vibrato_rate.get())]
+
+        if self.module == "midchip.viz":
+            if self.export.get().strip():
+                cmd += ["--export", self.export.get().strip()]
+            if self.width.get() != VIZ_DEFAULT_WIDTH:
+                cmd += ["--width", str(self.width.get())]
+            if self.height.get() != VIZ_DEFAULT_HEIGHT:
+                cmd += ["--height", str(self.height.get())]
+            if self.fps.get() != FPS:
+                cmd += ["--fps", str(self.fps.get())]
+        else:
+            if self.output.get().strip():
+                cmd += ["--output", self.output.get().strip()]
+            if self.play.get():
+                cmd.append("--play")
+
         return cmd
 
     def save_settings(self):
@@ -824,14 +1071,32 @@ class MidchipTab(ttk.Frame):
         self._saved.update(
             midi=self.midi.get(),
             chip=self.chip.get(),
+            no_chip_limits=self.no_chip_limits.get(),
             reverb=self.reverb.get(),
             vibrato=self.vibrato.get(),
             stereo=self.stereo.get(),
+            volume=self.volume.get(),
             substitute=self.substitute.get(),
             unison=self.unison.get(),
             detune=self.detune.get(),
             workers=self.workers.get(),
             no_dither=self.no_dither.get(),
+            no_rms_fix=self.no_rms_fix.get(),
+            seed=self.seed.get(),
+            attack=self.attack.get(),
+            release=self.release.get(),
+            normalize_target=self.normalize_target.get(),
+            limiter_threshold=self.limiter_threshold.get(),
+            reverb_mix=self.reverb_mix.get(),
+            reverb_decay=self.reverb_decay.get(),
+            vibrato_depth=self.vibrato_depth.get(),
+            vibrato_rate=self.vibrato_rate.get(),
+            output=self.output.get(),
+            play=self.play.get(),
+            export=self.export.get(),
+            width=self.width.get(),
+            height=self.height.get(),
+            fps=self.fps.get(),
             disabled_waves=disabled,
             recent_files=self.recent_files,
             advanced_open=self.advanced_open,

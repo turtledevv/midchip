@@ -122,3 +122,116 @@ REVERB_TAIL_SECONDS      = 1.5   # extra buffer padding so the tail isn't cut of
 
 DISP_SAMPLES = 512   # oscilloscope x-res per channel
 FPS          = 120
+
+
+# ── hardware chip constants (2A03/VRC6/FDS/DMG) ─────────────────────────────
+# CPU clocks and register-level facts used to make chip-restricted synthesis
+# actually behave like the real silicon (discrete pitches, real LFSR noise,
+# real wavetable widths, hardware envelope steps) instead of generic
+# freeform synthesis. Sources: nesdev.org/wiki/APU_Pulse, APU_Triangle,
+# APU_Noise, APU_Envelope, VRC6_audio, FDS_audio; gbdev.io/pandocs
+# Audio_Registers.html, Audio_details.html.
+
+NES_CPU_CLOCK_NTSC = 1_789_773   # Hz, RP2A03 NTSC CPU/APU clock
+GB_CPU_CLOCK        = 4_194_304  # Hz, DMG CPU clock
+
+# APU pulse/triangle timer: f = fCPU / (divisor * (period + 1)), period is an
+# N-bit register (0..2^bits-1). Pulse divides by 16, triangle by 32 (the
+# triangle's 32-step sequencer is clocked once per CPU cycle instead of once
+# per APU cycle, so for the same period it lands an octave below the pulses).
+NES_PULSE_DIVISOR    = 16
+NES_TRIANGLE_DIVISOR = 32
+NES_PERIOD_BITS      = 11
+
+# VRC6 sawtooth: also an accumulator-based channel, but its 12-bit period
+# register divides the CPU clock by 14 instead of 16 (nesdev VRC6_audio).
+VRC6_SAW_DIVISOR = 14
+VRC6_PERIOD_BITS = 12
+# 8-bit accumulator adds its rate 6 times then resets on the 7th clock, and
+# is read out as accum>>3 -> 7 distinct output levels (0, 1/6, ..., 1).
+VRC6_SAW_STEPS = 7
+
+# FDS (2C33) wave/modulation pitch: Hz = fCPU * pitch / 65536, pitch is a
+# 12-bit register (nesdev FDS_audio "Main Unit" formula).
+FDS_PITCH_BITS  = 12
+FDS_PITCH_SCALE = 65536
+# FDS wave RAM: 64 x 6-bit samples.
+FDS_WAVETABLE_LEN = 64
+
+# 2A03/VRC6/FDS noise channel: 15-bit Fibonacci LFSR, feedback = bit0 XOR
+# bit(tap). "Long" (normal) mode taps bit 1 (32767-step hiss); "short" mode
+# (mode flag set) taps bit 6 (93-step metallic buzz). NTSC noise period
+# table is the 16 fixed reload values the 4-bit $400E rate selects between,
+# in APU cycles (nesdev APU_Noise).
+NES_NOISE_WIDTH     = 15
+NES_NOISE_TAP_LONG  = 1
+NES_NOISE_TAP_SHORT = 6
+NES_NOISE_PERIODS_NTSC = (
+    4, 8, 16, 32, 64, 96, 128, 160,
+    202, 254, 380, 508, 762, 1016, 2034, 4068,
+)
+
+# Game Boy channel 4 (noise): also a 15-bit (or "narrow" 7-bit) LFSR,
+# feedback = bit0 XOR bit1, fed into the top bit + (narrow mode only) bit 6.
+# Clocked at fCPU / (divisor * 2^(shift+1)); divisor here is 8x the raw 3-bit
+# "dividing ratio" field r from NR43 (r=0 counts as 0.5), giving the 8
+# achievable divisors below and a max clock of 524288 Hz at r=0/shift=0
+# (gbdev Audio_Registers.html). shift 14-15 stop the LFSR from being clocked
+# at all, so 13 is the highest usable shift.
+GB_NOISE_WIDTH     = 15
+GB_NOISE_DIVISORS  = (4, 8, 16, 24, 32, 40, 48, 56)
+GB_NOISE_SHIFT_MAX = 13
+
+# Game Boy pulse/wave period: f = fCPU / (divisor * (2048 - x)), x is the
+# 11-bit period register. The wave channel's divider free-runs twice as slow
+# as the pulses' (clocked once per 2 dots vs. once per 4 dots), which is why
+# an identical period value lands an octave lower on CH3 than on CH1/CH2.
+GB_PULSE_DIVISOR  = 32
+GB_WAVE_DIVISOR   = 64
+GB_PERIOD_BITS    = 11
+GB_WAVE_TABLE_LEN = 32   # CH3 wave RAM: 32 x 4-bit samples
+
+# ── hardware-stepped envelopes / discrete volume levels ─────────────────────
+HW_VOLUME_STEPS = 16     # 4-bit up/down envelope counter (both NES & GB)
+NES_ENVELOPE_HZ = 240.0  # APU frame sequencer quarter-frame rate (NTSC)
+GB_ENVELOPE_HZ  = 64.0   # DMG envelope sweep clock (gbdev Audio_Registers)
+# DMG channel 3 has no envelope hardware, only a trigger-time volume
+# right-shift with 4 discrete output levels: mute, 100%, 50%, 25% (NR32).
+GB_WAVE_VOLUME_LEVELS = (0.0, 1.0, 0.5, 0.25)
+
+# ── SPC700 (SNES S-DSP) representative ADSR shape ───────────────────────────
+# Real hardware picks these off a 32-entry rate table per-instrument (so the
+# exact numbers vary per game/patch); these are representative "typical
+# chiptune instrument" values that give the right overall envelope
+# character - linear attack, exponential decay to a sustain level,
+# exponential release (snes.nesdev.org/wiki/DSP_envelopes).
+SPC_ATTACK_TIME  = 0.01   # seconds
+SPC_DECAY_TIME   = 0.05   # seconds
+SPC_SUSTAIN_LVL  = 0.75   # fraction of full volume
+SPC_RELEASE_TIME = 0.3    # seconds
+
+# ── noise-channel drum presets (chip percussion) ────────────────────────────
+# Real NES/GB chiptunes have no dedicated drum kit - every GM percussion hit
+# routes through the single noise channel, just retuned to a different
+# LFSR period/mode per drum category (see synth._generate_drum_wave). These
+# target frequencies/modes are an artistic per-category choice (there's no
+# single documented "correct" value), tuned to sit low + smooth for
+# kicks/snares/toms and high + metallic ("short"/narrow mode) for hats/cymbal.
+NES_DRUM_NOISE_PRESETS: dict[str, tuple[float, str]] = {
+    "kick":         (60.0,   "long"),
+    "snare":        (200.0,  "long"),
+    "tom":          (110.0,  "long"),
+    "hihat_closed": (4000.0, "short"),
+    "hihat_open":   (4000.0, "short"),
+    "cymbal":       (8000.0, "short"),
+    "default":      (500.0,  "long"),
+}
+GB_DRUM_NOISE_PRESETS: dict[str, tuple[float, bool]] = {
+    "kick":         (60.0,   False),
+    "snare":        (200.0,  False),
+    "tom":          (110.0,  False),
+    "hihat_closed": (4000.0, True),
+    "hihat_open":   (4000.0, True),
+    "cymbal":       (8000.0, True),
+    "default":      (500.0,  False),
+}

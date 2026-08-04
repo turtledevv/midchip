@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .constants import ATTACK, RELEASE, ALL_WAVES
+from .constants import (
+    ATTACK, RELEASE, ALL_WAVES,
+    NES_CPU_CLOCK_NTSC, GB_CPU_CLOCK,
+    NES_PULSE_DIVISOR, NES_TRIANGLE_DIVISOR, NES_PERIOD_BITS,
+    VRC6_SAW_DIVISOR, VRC6_PERIOD_BITS,
+    GB_PULSE_DIVISOR, GB_WAVE_DIVISOR, GB_PERIOD_BITS,
+    FDS_PITCH_BITS, FDS_PITCH_SCALE,
+)
 
 
 @dataclass
@@ -27,6 +34,13 @@ class ChipProfile:
     lowpass_hz:         float | None = None
     wave_voice_limit:   dict[str, int] | None = None
     triangle_steps:     int | None   = None
+
+    # ── real-hardware behavior switches ─────────────────────────────────
+    # "nes" (2A03/VRC6/2A03+FDS), "gb" (DMG), or "spc" (SPC700) - turns on
+    # register-quantized frequencies, real LFSR noise, hardware-stepped
+    # envelopes, etc. in synth.py/waveforms.py. None = the old freeform
+    # generic synthesis (used when the user picks "no chip").
+    hw_family: str | None = None
 
 
 _2A03_WAVES = frozenset({"pulse12", "pulse25", "square", "triangle", "noise"})
@@ -49,6 +63,7 @@ CHIP_PROFILES: dict[str, ChipProfile] = {
         freq_min=27.3, freq_max=12429.0,
         wave_voice_limit={"__pulse__": 2, "triangle": 1, "noise": 1, "dmc": 1},
         triangle_steps=32,
+        hw_family="nes",
     ),
 
     "vrc6": ChipProfile(
@@ -66,6 +81,7 @@ CHIP_PROFILES: dict[str, ChipProfile] = {
         freq_min=27.3, freq_max=16000.0,
         wave_voice_limit={"__pulse__": 4, "triangle": 1, "noise": 1, "dmc": 1, "saw": 1},
         triangle_steps=32,
+        hw_family="nes",
     ),
 
     "2a03fds": ChipProfile(
@@ -85,6 +101,7 @@ CHIP_PROFILES: dict[str, ChipProfile] = {
         freq_min=27.3, freq_max=12429.0,
         wave_voice_limit={"__pulse__": 2, "triangle": 1, "noise": 1, "dmc": 1, "additive": 1},
         triangle_steps=32,
+        hw_family="nes",
     ),
 
     "spc700": ChipProfile(
@@ -99,6 +116,7 @@ CHIP_PROFILES: dict[str, ChipProfile] = {
         lowpass_hz=14000.0,  # Gaussian interpolation roll-off approximation
         wave_voice_limit=None,
         triangle_steps=None,
+        hw_family="spc",
     ),
 
     "dmg": ChipProfile(
@@ -116,10 +134,65 @@ CHIP_PROFILES: dict[str, ChipProfile] = {
         freq_min=65.0, freq_max=6000.0,
         wave_voice_limit={"__pulse__": 2, "additive": 1, "noise": 1},
         triangle_steps=32,
+        hw_family="gb",
     ),
 }
 
 PULSE_VARIANTS = frozenset({"square", "pulse25", "pulse12"})
+
+
+def quantize_frequency(chip: ChipProfile | None, wave_type: str, freq: float) -> float:
+    """Snap `freq` (Hz) to the nearest pitch the real chip's frequency
+    divider can actually produce.
+
+    This is the single biggest lever for "sounds like it's really running
+    on the hardware": every one of these chips tunes its oscillators with a
+    fixed-point N-bit period register driving an integer clock divider, so
+    they can *only* land on whatever discrete frequency that division works
+    out to - never an arbitrary continuous Hz value the way a software synth
+    can. That's exactly why real NES/GB music has its own characteristic
+    "slightly off" microtonal wobble in the low register: A4 might be spot
+    on, but the note a fifth below it can be several cents flat because nothing
+    in the divider table lands closer. Skipping this step is why a lot of
+    "NES-style" synths sound like a synth doing NES *timbres* instead of an
+    actual 2A03: continuous pitch is something the real chip cannot do.
+
+    Sources: nesdev.org/wiki/APU_Pulse, APU_Triangle, VRC6_audio, FDS_audio;
+    gbdev.io/pandocs/Audio_Registers.html.
+    """
+    if chip is None or chip.hw_family is None or freq <= 0:
+        return freq
+
+    if chip.hw_family == "nes":
+        if wave_type == "triangle":
+            divisor, bits = NES_TRIANGLE_DIVISOR, NES_PERIOD_BITS
+        elif wave_type == "saw" and chip.name == "vrc6":
+            divisor, bits = VRC6_SAW_DIVISOR, VRC6_PERIOD_BITS
+        elif wave_type in PULSE_VARIANTS:
+            divisor, bits = NES_PULSE_DIVISOR, NES_PERIOD_BITS
+        elif wave_type == "additive" and chip.name == "2a03fds":
+            # FDS wavetable channel: Hz = fCPU * (pitch / 65536), 12-bit pitch
+            pitch = round(freq * FDS_PITCH_SCALE / NES_CPU_CLOCK_NTSC)
+            pitch = max(1, min(pitch, (1 << FDS_PITCH_BITS) - 1))
+            return NES_CPU_CLOCK_NTSC * pitch / FDS_PITCH_SCALE
+        else:
+            return freq  # noise handled separately (it's not a "pitch" in the normal sense)
+        period = round(NES_CPU_CLOCK_NTSC / (divisor * freq) - 1)
+        period = max(0, min(period, (1 << bits) - 1))
+        return NES_CPU_CLOCK_NTSC / (divisor * (period + 1))
+
+    if chip.hw_family == "gb":
+        if wave_type == "additive":       # channel 3 wavetable (triangle remap)
+            divisor = GB_WAVE_DIVISOR
+        elif wave_type in PULSE_VARIANTS:
+            divisor = GB_PULSE_DIVISOR
+        else:
+            return freq
+        x = round(2048 - GB_CPU_CLOCK / (divisor * freq))
+        x = max(0, min(x, (1 << GB_PERIOD_BITS) - 1))
+        return GB_CPU_CLOCK / (divisor * (2048 - x))
+
+    return freq
 
 
 def wave_pool_key(chip: ChipProfile, wt: str) -> str:
@@ -185,11 +258,25 @@ def assign_voice_slots(intervals: list, chip: ChipProfile | None):
         if free:
             best = min(free, key=lambda i: slots[i][0])
         else:
-            # No free voice: steal whichever occupant ends soonest, and
-            # actually cut it off at the moment it gets stolen, rather than
-            # leaving it to keep sounding underneath the note that took its
-            # slot - that's the whole point of a hardware voice limit.
-            best = min(range(len(slots)), key=lambda i: slots[i][0])
+            # No free voice: steal the *least important* occupant rather
+            # than whichever one simply happens to end soonest. Picking by
+            # soonest-end alone makes the stolen voice hop unpredictably
+            # from note to note as new notes arrive, so instead of one
+            # clean cutoff you hear a scatter of little truncations across
+            # several voices. Priority instead mirrors how real
+            # synths/samplers pick a steal target: quietest note loses
+            # first (least audible impact), and among equally-quiet notes
+            # the oldest one loses (it's already been heard, so cutting it
+            # reads as natural decay rather than an interruption). This
+            # keeps loud, freshly-triggered notes essentially safe from
+            # being stolen, which is what makes the swapping feel stable
+            # instead of erratic.
+            best = min(
+                range(len(slots)),
+                key=lambda i: (slots[i][1].velocity, slots[i][1].start_time)
+                if slots[i][1] is not None
+                else (-1.0, -1.0),
+            )
             occupant = slots[best][1]
             if occupant is not None and occupant.end_time > iv.start_time:
                 occupant.end_time = iv.start_time

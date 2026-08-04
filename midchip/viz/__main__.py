@@ -30,16 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common_args(parser)
     parser.add_argument(
-        "--export", metavar="OUT.mp4", default=None,
+        "-e", "--export", metavar="OUT.mp4", default=None,
         help="Render to a video file instead of opening a live window "
              "(requires ffmpeg on PATH)",
     )
-    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH,
+    parser.add_argument("-W", "--width", type=int, default=DEFAULT_WIDTH,
                          help=f"Window/video width in pixels (default {DEFAULT_WIDTH})")
-    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT,
+    parser.add_argument("-H", "--height", type=int, default=DEFAULT_HEIGHT,
                          help=f"Window/video height in pixels (default {DEFAULT_HEIGHT})")
     parser.add_argument(
-        "--fps", type=int, default=FPS,
+        "-f", "--fps", type=int, default=FPS,
         help=f"Frame rate for --export (default {FPS}). The live window "
              "free-runs at the display's refresh rate instead.",
     )
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     disabled = parse_disabled(args.disable)
     substitutions = parse_substitutions(args.substitute)
-    chip = get_chip(args.chip)
+    chip = get_chip(args.chip, no_channel_limits=args.no_chip_channel_limits)
 
     ui.step(f"Parsing {args.midi_file}...")
     intervals, total_time, used, cc_by_channel, bend_by_channel = parse_intervals(
@@ -90,6 +90,12 @@ def main(argv: list[str] | None = None) -> None:
         stereo=not args.mono, reverb=args.reverb,
         unison_voices=args.unison, unison_detune_cents=args.detune,
         dither=not args.no_dither, workers=args.workers,
+        rms_fix=not args.no_rms_fix, seed=args.seed,
+        attack=args.attack, release=args.release,
+        reverb_mix=args.reverb_mix, reverb_decay=args.reverb_decay,
+        normalize_target=args.normalize_target,
+        limiter_threshold=args.limiter_threshold,
+        vibrato_rate=args.vibrato_rate, vibrato_depth=args.vibrato_depth,
     )
     ui.blank()  # newline after the progress bar
 

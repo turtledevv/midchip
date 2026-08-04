@@ -18,6 +18,12 @@ import numpy as np
 from .constants import (
     SAMPLE_RATE, NYQUIST, HF_THRESH,
     KICK_TONE_START_HZ, KICK_TONE_END_HZ, KICK_TONE_MIX, KICK_PITCH_DECAY,
+    NES_CPU_CLOCK_NTSC, NES_NOISE_PERIODS_NTSC,
+    NES_NOISE_TAP_LONG, NES_NOISE_TAP_SHORT, NES_NOISE_WIDTH,
+    GB_CPU_CLOCK, GB_NOISE_DIVISORS, GB_NOISE_SHIFT_MAX, GB_NOISE_WIDTH,
+    VRC6_SAW_STEPS,
+    FDS_WAVETABLE_LEN,
+    GB_WAVE_TABLE_LEN,
 )
 
 
@@ -72,6 +78,149 @@ def osc_triangle(t: np.ndarray, f: float, steps: int | None = None, bandlimit: b
 
 def osc_noise(n_samples: int) -> np.ndarray:
     return np.random.uniform(-1, 1, n_samples)
+
+
+# ── real hardware chip oscillators ──────────────────────────────────────────
+# these replace generic band-limited approximations with the actual digital
+# logic (LFSRs, phase accumulators, wavetables) documented for each chip, so
+# that e.g. "noise" sounds like the 2A03's specific buzzy/metallic LFSR
+# instead of generic white noise, and VRC6's sawtooth sounds like its coarse
+# 7-step accumulator ramp instead of a smooth band-limited saw.
+
+def _lfsr_stream(n_steps: int, width: int, tap: int, narrow_tap: int | None = None,
+                  seed: int = 1) -> np.ndarray:
+    """Fibonacci LFSR bitstream, one value per shift-register clock.
+
+    Matches the NES/GB noise topology described on nesdev.org/wiki/APU_Noise
+    and gbdev.io: feedback = bit0 XOR bit(tap); shift right; feedback goes
+    into the top bit (bit `width-1`), and - only for the Game Boy's 7-bit
+    "narrow" mode - is ALSO written into bit 6, which shortens the cycle and
+    gives that more tonal/regular buzz. Output is +1 while bit0 is clear
+    (the chip's "loud" state) and -1 while bit0 is set ("silent" state on
+    real hardware; mapped to bipolar here so it composes with the rest of
+    the render pipeline the same way every other oscillator does).
+    """
+    reg = seed
+    out = np.empty(n_steps, dtype=np.float64)
+    top_bit = width - 1
+    for i in range(n_steps):
+        out[i] = 1.0 if (reg & 1) == 0 else -1.0
+        fb = (reg & 1) ^ ((reg >> tap) & 1)
+        reg >>= 1
+        reg |= fb << top_bit
+        if narrow_tap is not None:
+            reg = (reg & ~(1 << narrow_tap)) | (fb << narrow_tap)
+    return out
+
+
+def _hold_upsample(steps: np.ndarray, hold_samples: float, n_out: int) -> np.ndarray:
+    """Zero-order-hold each LFSR/accumulator step out to `n_out` audio
+    samples at SAMPLE_RATE - real hardware just holds its DAC output steady
+    between clocks, it doesn't interpolate."""
+    if hold_samples <= 0 or len(steps) == 0:
+        return np.zeros(n_out)
+    idx = (np.arange(n_out) / hold_samples).astype(np.int64) % len(steps)
+    return steps[idx]
+
+
+def osc_nes_noise(t: np.ndarray, freq: float, mode: str = "long") -> np.ndarray:
+    """2A03/VRC6/FDS noise channel: real 15-bit LFSR, clocked at whichever
+    of the chip's 16 fixed periods is closest to the requested pitch.
+    `mode` "long" = 32767-step hiss (bit0^bit1 feedback), "short" =
+    ~93-step metallic buzz (bit0^bit6 feedback) - NESdev APU_Noise.
+    """
+    n = len(t)
+    if n == 0:
+        return np.zeros(0)
+    target_clock = max(freq, 1.0)
+    # pick the nearest of the 16 hardware periods (APU cycles = 2 CPU cycles)
+    clocks = NES_CPU_CLOCK_NTSC / 2.0 / np.array(NES_NOISE_PERIODS_NTSC, dtype=float)
+    period = NES_NOISE_PERIODS_NTSC[int(np.argmin(np.abs(clocks - target_clock)))]
+    clock_hz = NES_CPU_CLOCK_NTSC / 2.0 / period
+    hold_samples = SAMPLE_RATE / clock_hz
+    tap = NES_NOISE_TAP_SHORT if mode == "short" else NES_NOISE_TAP_LONG
+    n_steps = max(2, int(n / hold_samples) + 2)
+    steps = _lfsr_stream(n_steps, NES_NOISE_WIDTH, tap)
+    return _hold_upsample(steps, hold_samples, n)
+
+
+def osc_gb_noise(t: np.ndarray, freq: float, narrow: bool = False) -> np.ndarray:
+    """Game Boy channel 4: real 15-bit (or 7-bit "narrow") LFSR. Frequency
+    is F = 4194304 / (divisor * 2^(shift+1)); we search the achievable
+    (divisor, shift) grid for the closest match to the requested pitch
+    (pandocs Audio_Registers.html)."""
+    n = len(t)
+    if n == 0:
+        return np.zeros(0)
+    target_clock = max(freq, 1.0)
+    best_clock, best_err = None, float("inf")
+    for divisor in GB_NOISE_DIVISORS:
+        for shift in range(GB_NOISE_SHIFT_MAX + 1):
+            clock_hz = GB_CPU_CLOCK / (divisor * (2 ** (shift + 1)))
+            err = abs(clock_hz - target_clock)
+            if err < best_err:
+                best_err, best_clock = err, clock_hz
+    hold_samples = SAMPLE_RATE / best_clock
+    narrow_tap = 6 if narrow else None
+    n_steps = max(2, int(n / hold_samples) + 2)
+    steps = _lfsr_stream(n_steps, GB_NOISE_WIDTH, tap=1, narrow_tap=narrow_tap)
+    return _hold_upsample(steps, hold_samples, n)
+
+
+def osc_vrc6_saw(t: np.ndarray, f: float) -> np.ndarray:
+    """VRC6 sawtooth: an 8-bit accumulator adds its rate 6 times then resets
+    to 0 on the 7th clock, output as accum>>3 - a rising 7-level staircase
+    per period, NOT a smooth/band-limited ramp (nesdev.org/wiki/VRC6_audio).
+    The period divides the CPU clock by 14 (not 16, unlike the pulses).
+    """
+    phase = _phase(t, f) * VRC6_SAW_STEPS
+    level = np.floor(phase) / (VRC6_SAW_STEPS - 1)   # 7 discrete steps: 0, 1/6, ..., 1
+    return level * 2.0 - 1.0
+
+
+def _default_fds_wavetable() -> np.ndarray:
+    # FDS wave RAM is fully user-defined per game/instrument, so there's no
+    # single "correct" table; a quantized sine is the standard smooth
+    # default used across FDS-capable trackers (FamiStudio/FamiTracker) and
+    # gives a representative warm FDS carrier tone.
+    idx = np.arange(FDS_WAVETABLE_LEN)
+    raw = np.sin(2 * np.pi * idx / FDS_WAVETABLE_LEN)
+    quant = np.round((raw * 0.5 + 0.5) * 63.0) / 63.0   # 6-bit (0-63) DAC
+    return quant * 2.0 - 1.0
+
+
+_FDS_DEFAULT_TABLE = _default_fds_wavetable()
+
+
+def osc_fds_wave(t: np.ndarray, f: float, table: np.ndarray | None = None) -> np.ndarray:
+    """FDS (2C33) wave channel: a 64-step, 6-bit wavetable read out by a
+    phase accumulator (nesdev.org/wiki/FDS_audio)."""
+    tbl = table if table is not None else _FDS_DEFAULT_TABLE
+    phase = _phase(t, f) * len(tbl)
+    idx = np.floor(phase).astype(np.int64) % len(tbl)
+    return tbl[idx]
+
+
+def _default_gb_wavetable() -> np.ndarray:
+    # Game Boy channel-3 wave RAM is also fully user-defined (32 x 4-bit
+    # samples); a quantized triangle is the closest single stand-in, and
+    # happens to be one of the most common shapes GB composers actually
+    # loaded for lead/bass duty.
+    idx = np.arange(GB_WAVE_TABLE_LEN)
+    tri = 2.0 * np.abs(2.0 * (idx / GB_WAVE_TABLE_LEN - 0.5)) - 1.0
+    quant = np.round((tri * 0.5 + 0.5) * 15.0) / 15.0   # 4-bit (0-15) DAC
+    return quant * 2.0 - 1.0
+
+
+_GB_DEFAULT_TABLE = _default_gb_wavetable()
+
+
+def osc_gb_wave(t: np.ndarray, f: float, table: np.ndarray | None = None) -> np.ndarray:
+    """Game Boy CH3: 32-step, 4-bit wavetable channel."""
+    tbl = table if table is not None else _GB_DEFAULT_TABLE
+    phase = _phase(t, f) * len(tbl)
+    idx = np.floor(phase).astype(np.int64) % len(tbl)
+    return tbl[idx]
 
 
 def osc_pulse25(t: np.ndarray, f: float, bandlimit: bool = True) -> np.ndarray:

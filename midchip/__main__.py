@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write rendered audio to this .wav path",
     )
     parser.add_argument(
-        "--play", action="store_true",
+        "-p", "--play", action="store_true",
         help="Play the rendered audio back. This is the default behavior "
              "when --output isn't given; pass it explicitly to also play "
              "back audio that's being saved to a file.",
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     disabled = parse_disabled(args.disable)
     substitutions = parse_substitutions(args.substitute)
-    chip = get_chip(args.chip)
+    chip = get_chip(args.chip, no_channel_limits=args.no_chip_channel_limits)
 
     # No --output means there's nothing else to do with the audio but play it.
     should_play = args.play or args.output is None
@@ -93,6 +93,12 @@ def main(argv: list[str] | None = None) -> None:
         stereo=not args.mono, reverb=args.reverb,
         unison_voices=args.unison, unison_detune_cents=args.detune,
         dither=not args.no_dither, workers=args.workers,
+        rms_fix=not args.no_rms_fix, seed=args.seed,
+        attack=args.attack, release=args.release,
+        reverb_mix=args.reverb_mix, reverb_decay=args.reverb_decay,
+        normalize_target=args.normalize_target,
+        limiter_threshold=args.limiter_threshold,
+        vibrato_rate=args.vibrato_rate, vibrato_depth=args.vibrato_depth,
     )
     ui.blank()  # newline after progress bar
 
