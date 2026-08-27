@@ -23,7 +23,7 @@ from .constants import SAMPLE_RATE
 from .midi_parser import parse_intervals
 from .synth import render_audio
 
-VERSION = "v2.4.0"
+VERSION = "v2.4.1"
 
 def _progress(i: int, total: int) -> None:
     line = ui.progress_bar(i, total, label="Rendering")
