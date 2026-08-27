@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Contents/MacOS/midchip-launcher
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/midchip-gui" "$@"

@@ -1,6 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
+rem note to self: windows is stupid, and so are batch files
+
 cd /d "%~dp0.."
 
 if not exist "entrypoints" (
@@ -12,38 +14,27 @@ if not exist "midchip" (
     exit /b 1
 )
 
-if exist midchip.spec del /q midchip.spec
-if exist midchip-viz.spec del /q midchip-viz.spec
-if exist midchip-gui.spec del /q midchip-gui.spec
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
-pyinstaller --name midchip --noconfirm --onefile --paths . --collect-all midchip ^
-  --distpath dist\midchip-bundle entrypoints\cli.py
+python -m PyInstaller scripts\midchip.spec --noconfirm --distpath dist
 if errorlevel 1 (
-    echo error: build failed for midchip 1>&2
+    echo error: build failed 1>&2
     exit /b 1
 )
 
-pyinstaller --name midchip-viz --noconfirm --onefile --paths . --collect-all midchip ^
-  --distpath dist\midchip-bundle entrypoints\viz.py
-if errorlevel 1 (
-    echo error: build failed for midchip-viz 1>&2
-    exit /b 1
-)
-
-pyinstaller --name midchip-gui --noconfirm --onefile --windowed --paths . ^
-  --collect-all midchip --collect-all tkinter ^
-  --distpath dist\midchip-bundle entrypoints\gui.py
-if errorlevel 1 (
-    echo error: build failed for midchip-gui 1>&2
-    exit /b 1
-)
-
-copy /y README.md dist\midchip-bundle\ >nul
+copy /y README.md dist\midchip\ >nul
 if errorlevel 1 (
     echo error: failed to copy README.md 1>&2
     exit /b 1
 )
 
-echo Build complete: dist\midchip-bundle\
+if exist assets\midchip.png (
+    copy /y assets\midchip.png dist\midchip\ >nul
+)
+
+echo Build complete: dist\midchip\
+echo   dist\midchip\midchip.exe       (CLI)
+echo   dist\midchip\midchip-viz.exe   (visualizer)
+echo   dist\midchip\midchip-gui.exe   (GUI)
+echo   dist\midchip\_internal\        (shared libs)

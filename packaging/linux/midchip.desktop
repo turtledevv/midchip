@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MidChip
+Comment=Turn MIDI files into chiptune!
+Exec=/opt/midchip/midchip-gui
+Icon=/opt/midchip/midchip.png
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+StartupNotify=true

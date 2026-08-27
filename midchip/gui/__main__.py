@@ -14,6 +14,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
+from midchip.resources import asset_path
+
 from midchip.cli_common import (
     ALL_WAVES, CHIP_PROFILES, MASTER_VOLUME,
     REVERB_MIX, REVERB_DECAY, VIBRATO_RATE_HZ, VIBRATO_DEPTH_SEMITONES,
@@ -1142,6 +1144,18 @@ class App:
         root.geometry("640x600")
         root.minsize(560, 480)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # iconphoto sets both the window titlebar icon and (on
+        # Linux/Windows) the taskbar icon. Keep a reference on self --
+        # tk.PhotoImage has no Python-side owner otherwise and gets
+        # garbage-collected out from under the window.
+        icon_file = asset_path("midchip.png")
+        if icon_file is not None:
+            try:
+                self._icon_image = tk.PhotoImage(file=str(icon_file))
+                root.iconphoto(True, self._icon_image)
+            except tk.TclError:
+                pass  # missing/corrupt icon is cosmetic, never fatal
 
         base_font = font.Font(family=pick_ui_font(root), size=10)
         apply_dark_theme(root, base_font)

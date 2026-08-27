@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   release:
     types: [published]
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -12,72 +15,134 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset_name: midchip-linux
+            platform: linux
+            asset_name: midchip-linux-x86_64
           - os: macos-latest
+            platform: macos
             asset_name: midchip-macos
           - os: windows-latest
+            platform: windows
             asset_name: midchip-windows
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Check out repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -r requirements.txt
           pip install pyinstaller
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        shell: bash
 
-      - name: Build bundle (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: bash scripts/build.sh
-
-      - name: Build bundle (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: scripts\build.bat
-
-      - name: Verify expected outputs exist
+      - name: Build standalone bundle
         run: |
-          set -e
-          ls -la dist/midchip-bundle
-          test -f dist/midchip-bundle/README.md
           if [ "${{ runner.os }}" = "Windows" ]; then
-            test -f dist/midchip-bundle/midchip.exe
-            test -f dist/midchip-bundle/midchip-viz.exe
-            test -f dist/midchip-bundle/midchip-gui.exe
+            scripts/build.bat
           else
-            test -f dist/midchip-bundle/midchip
-            test -f dist/midchip-bundle/midchip-viz
-            test -f dist/midchip-bundle/midchip-gui
-            test -x dist/midchip-bundle/midchip
-            test -x dist/midchip-bundle/midchip-viz
-            test -x dist/midchip-bundle/midchip-gui
+            bash scripts/build.sh
           fi
         shell: bash
 
-      - name: Zip the bundle
-        run: |
-          cd dist
-          7z a -tzip "${{ matrix.asset_name }}.zip" midchip-bundle
+      - name: Rename standalone bundle to asset name
+        run: cp -r dist/midchip dist/midchip-${{ matrix.platform }}-standalone
         shell: bash
 
-      - name: Upload workflow artifact
+      - name: Upload standalone artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}.zip
+          name: midchip-${{ matrix.platform }}-standalone
+          path: dist/midchip-${{ matrix.platform }}-standalone
+          if-no-files-found: error
 
-      - name: Upload asset to release
+      # ---- installer build, platform-specific ----
+
+      - name: Build AppImage installer (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          bash packaging/linux/build-appimage.sh
+          test -f dist/MidChip-x86_64.AppImage
+          chmod +x dist/MidChip-x86_64.AppImage
+
+      - name: Build .app installer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0-dev"
+          bash packaging/macos/build-app.sh "$VERSION"
+          test -d dist/MidChip.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/MidChip.app \
+            dist/MidChip-macos-installer.zip
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          if ([string]::IsNullOrEmpty($version)) {
+            $version = "0.0.0-dev"
+          }
+
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+
+          & "$iscc" "/DMyAppVersion=$version" packaging\windows\midchip.iss
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          if (-not (Test-Path "dist\midchip-windows-setup.exe")) {
+            Write-Error "Expected dist\midchip-windows-setup.exe"
+            exit 1
+          }
+
+      # ---- upload installer artifacts ----
+
+      - name: Upload installer artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: midchip-linux-installer
+          path: dist/MidChip-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Upload installer artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: midchip-macos-installer
+          path: dist/MidChip-macos-installer.zip
+          if-no-files-found: error
+
+      - name: Upload installer artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: midchip-windows-installer
+          path: dist/midchip-windows-setup.exe
+          if-no-files-found: error
+
+      # ---- attach installers to GitHub releases ----
+
+      - name: Upload assets to release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ matrix.asset_name }}.zip
+          files: |
+            dist/MidChip-x86_64.AppImage
+            dist/MidChip-macos-installer.zip
+            dist/midchip-windows-setup.exe
           token: ${{ secrets.GITHUB_TOKEN }}

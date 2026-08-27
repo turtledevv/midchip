@@ -16,6 +16,7 @@ import pygame
 
 from midchip import SAMPLE_RATE, FPS
 from midchip import ui
+from midchip.resources import asset_path
 
 from .render import OscilloscopeGrid
 
@@ -39,6 +40,15 @@ def run_live(
     channels = audio.shape[1] if audio.ndim == 2 else 1
     pygame.mixer.pre_init(frequency=SAMPLE_RATE, size=-16, channels=channels)
     pygame.init()
+
+    # set_icon must be called before set_mode to reliably take effect
+    # (pygame docs: "call this before set_mode").
+    icon_file = asset_path("midchip.png")
+    if icon_file is not None:
+        try:
+            pygame.display.set_icon(pygame.image.load(str(icon_file)))
+        except pygame.error:
+            pass  # missing/corrupt icon is cosmetic, never fatal
 
     screen = pygame.display.set_mode((width, height))
     title = _title_for(midi_path, chip)
