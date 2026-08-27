@@ -5,6 +5,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -58,7 +61,7 @@ jobs:
           path: dist/midchip-${{ matrix.platform }}-standalone
           if-no-files-found: error
 
-      # ---- installer build, platform-specific ----
+      # ---- installer build ----
 
       - name: Build AppImage installer (Linux)
         if: runner.os == 'Linux'
@@ -85,6 +88,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+
           if ([string]::IsNullOrEmpty($version)) {
             $version = "0.0.0-dev"
           }
@@ -132,10 +136,26 @@ jobs:
           path: dist/midchip-windows-setup.exe
           if-no-files-found: error
 
-      # ---- attach installers to GitHub releases ----
+
+  release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: midchip-*-installer
+          path: dist
+          merge-multiple: true
+
+      - name: List release assets
+        run: find dist -type f -maxdepth 2 -print
 
       - name: Upload assets to release
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
