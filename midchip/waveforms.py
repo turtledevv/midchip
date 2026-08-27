@@ -80,7 +80,6 @@ def osc_noise(n_samples: int) -> np.ndarray:
     return np.random.uniform(-1, 1, n_samples)
 
 
-# ── real hardware chip oscillators ──────────────────────────────────────────
 # these replace generic band-limited approximations with the actual digital
 # logic (LFSRs, phase accumulators, wavetables) documented for each chip, so
 # that e.g. "noise" sounds like the 2A03's specific buzzy/metallic LFSR

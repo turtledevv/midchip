@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import os
 import queue
@@ -86,16 +87,19 @@ CONFIG_PATH = _default_config_dir() / "gui_settings.json"
 # Theme
 # ---------------------------------------------------------------------------
 
-BG = "#1e1e2e"          # window background
-BG_RAISED = "#242438"   # header / status strip
-SURFACE = "#282839"     # panels, entries, list boxes
-SURFACE_HI = "#45475a"  # hovered/active surface
-BORDER = "#3a3a4d"
-FG = "#cdd6f4"           # primary text
-FG_MUTED = "#a6adc8"     # secondary text
-FG_DIM = "#6c7086"        # tertiary / disabled text
-ACCENT = "#89b4fa"       # links/selection/accent
+BG = "#1e1e2e"
+BG_RAISED = "#232336"
+SURFACE = "#29293b"
+SURFACE_HI = "#3d3d52"
+BORDER = "#36364a"
+
+FG = "#cdd6f4"
+FG_MUTED = "#a6adc8"
+FG_DIM = "#6c7086"
+
+ACCENT = "#89b4fa"
 ACCENT_ACTIVE = "#74c7ec"
+
 DANGER = "#f38ba8"
 DANGER_ACTIVE = "#eb6f92"
 SUCCESS = "#a6e3a1"
@@ -177,7 +181,7 @@ def pick_ui_font(root: tk.Tk) -> str:
 
 def apply_dark_theme(root: tk.Tk, base_font: font.Font) -> ttk.Style:
     style = ttk.Style(root)
-    style.theme_use("clam")
+    style.theme_use("alt")
 
     root.configure(bg=BG)
     style.configure(".", background=BG, foreground=FG, font=base_font)
@@ -192,10 +196,20 @@ def apply_dark_theme(root: tk.Tk, base_font: font.Font) -> ttk.Style:
     style.configure("Heading.TLabel", background=BG_RAISED, foreground=FG, font=bold_base)
 
     style.configure(
-        "TLabelframe", background=BG, foreground=FG_MUTED, bordercolor=BORDER
+        "TLabelframe",
+        background=BG,
+        foreground=FG_MUTED,
+        bordercolor=BORDER,
+        relief="solid",
+        borderwidth=1,
     )
+
     style.configure(
-        "TLabelframe.Label", background=BG, foreground=ACCENT, font=bold_base
+        "TLabelframe.Label",
+        background=BG,
+        foreground=ACCENT,
+        font=bold_base,
+        padding=(4, 0),
     )
 
     style.configure(
@@ -226,17 +240,40 @@ def apply_dark_theme(root: tk.Tk, base_font: font.Font) -> ttk.Style:
     )
 
     style.configure(
-        "Accent.TButton", background=ACCENT, foreground="#1e1e2e", padding=(10, 6)
+        "TButton",
+        background=SURFACE,
+        foreground=FG,
+        bordercolor=BORDER,
+        focusthickness=0,
+        padding=(12, 7),
     )
+
+    style.configure(
+        "Accent.TButton",
+        background=ACCENT,
+        foreground=BG,
+        bordercolor=ACCENT,
+        focusthickness=0,
+        padding=(14, 8),
+        font=bold_base,
+    )
+
+    style.configure(
+        "Danger.TButton",
+        background=DANGER,
+        foreground=BG,
+        bordercolor=DANGER,
+        focusthickness=0,
+        padding=(14, 8),
+        font=bold_base,
+    )
+
     style.map(
         "Accent.TButton",
         background=[("active", ACCENT_ACTIVE), ("disabled", SURFACE)],
         foreground=[("disabled", FG_DIM)],
     )
 
-    style.configure(
-        "Danger.TButton", background=DANGER, foreground="#1e1e2e", padding=(10, 6)
-    )
     style.map(
         "Danger.TButton",
         background=[("active", DANGER_ACTIVE), ("disabled", SURFACE)],
@@ -291,18 +328,31 @@ def apply_dark_theme(root: tk.Tk, base_font: font.Font) -> ttk.Style:
         indicatorcolor=[("selected", ACCENT), ("!selected", SURFACE)],
     )
 
-    style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 4, 0, 0))
+    style.configure(
+        "TNotebook",
+        background=BG,
+        borderwidth=0,
+        tabmargins=(0, 6, 0, 0),
+    )
+
     style.configure(
         "TNotebook.Tab",
-        background=SURFACE,
+        background=BG_RAISED,
         foreground=FG_MUTED,
-        padding=(18, 9),
+        padding=(16, 8),
         borderwidth=0,
     )
+
     style.map(
         "TNotebook.Tab",
-        background=[("selected", BG)],
-        foreground=[("selected", FG)],
+        background=[
+            ("selected", SURFACE),
+            ("active", SURFACE_HI),
+        ],
+        foreground=[
+            ("selected", FG),
+            ("active", FG),
+        ],
     )
 
     style.configure("TPanedwindow", background=BG)
@@ -543,7 +593,7 @@ class Terminal(tk.Frame):
         for i, segment in enumerate(segments):
             if i > 0:
                 # A bare \r: wipe everything typed since the last newline.
-                self.text.delete("end linestart", "end")
+                self.text.delete("end-1c linestart", "end-1c")
             if segment:
                 self.text.insert("end", segment, self._tag())
 
@@ -1223,12 +1273,27 @@ class App:
 
         env = os.environ.copy()
         env["MIDCHIP_GUI"] = "1"
+        # Force the child to encode its stdio as UTF-8 regardless of the
+        # OS locale/code page (on Windows this defaults to e.g. cp1252,
+        # which can't represent the glyphs in midchip.ui and silently
+        # gets mangled into literal "\uXXXX" text by stderr's
+        # backslashreplace error handler).
+        env["PYTHONIOENCODING"] = "utf-8"
 
+        # Deliberately NOT using text=True here. Popen's text mode always
+        # runs the pipe through universal-newline translation with no way
+        # to opt out (there's no "newline=" param on Popen, unlike
+        # open()/TextIOWrapper) -- it silently rewrites every bare "\r"
+        # into "\n" before our code ever sees it. progress_bar() relies on
+        # a real "\r" to overwrite the current line, and _write_plain
+        # already knows how to handle that correctly -- it just never got
+        # the chance, so the bar printed a new line every update instead.
+        # Reading raw bytes ourselves and decoding manually (below) keeps
+        # "\r" intact.
         popen_kwargs = dict(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            bufsize=0,
             env=env,
         )
         if os.name == "nt":
@@ -1251,8 +1316,22 @@ class App:
 
         def reader():
             assert proc.stdout is not None
-            for line in proc.stdout:
-                out_queue.put(line)
+            # Read raw chunks (not line-by-line) and decode them ourselves.
+            # This sidesteps Popen's forced universal-newline translation
+            # entirely, so "\r" reaches the terminal widget unchanged, and
+            # we control the decoding (utf-8, matching PYTHONIOENCODING
+            # above) instead of falling back to a locale-dependent
+            # codec -- which on Windows can't represent the glyphs in
+            # midchip.ui and is what produced the literal "\uXXXX" text.
+            # An incremental decoder is required here: a fixed-size raw
+            # read can split a multi-byte UTF-8 character (e.g. one of
+            # ui.py's icons) across two chunks, and decoding each chunk
+            # independently would mangle it right back into replacement
+            # characters.
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            for chunk in iter(lambda: proc.stdout.read(1024), b""):
+                out_queue.put(decoder.decode(chunk))
+            out_queue.put(decoder.decode(b"", final=True))
             proc.stdout.close()
             proc.wait()
             out_queue.put((None, proc.returncode))  # sentinel: process finished
