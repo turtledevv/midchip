@@ -6,7 +6,7 @@
 
 #define MyAppName "MidChip"
 #ifndef MyAppVersion
-  #define MyAppVersion "2.3.0"
+  #define MyAppVersion "2.4.0"
 #endif
 #define MyAppPublisher "turtledevv"
 #define MyAppURL "https://github.com/turtledevv/midchip"
