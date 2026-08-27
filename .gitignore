@@ -37,7 +37,6 @@ pip-wheel-metadata/
 
 # PyInstaller
 *.manifest
-*.spec
 *.pyz
 *.pyzw
 
