@@ -50,15 +50,28 @@ jobs:
           fi
         shell: bash
 
-      - name: Rename standalone bundle to asset name
-        run: cp -r dist/midchip dist/midchip-${{ matrix.platform }}-standalone
+      # ---- standalone packaging ----
+
+      - name: Package standalone bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          set -e
+          cd dist
+          zip -r -q "MidChip-${{ matrix.platform }}-standalone.zip" midchip
+          cd ..
         shell: bash
+
+      - name: Package standalone bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\midchip\* -DestinationPath dist\MidChip-windows-standalone.zip
 
       - name: Upload standalone artifact
         uses: actions/upload-artifact@v4
         with:
-          name: midchip-${{ matrix.platform }}-standalone
-          path: dist/midchip-${{ matrix.platform }}-standalone
+          name: MidChip-${{ matrix.platform }}-standalone.zip
+          path: dist/MidChip-${{ matrix.platform }}-standalone.zip
           if-no-files-found: error
 
       # ---- installer build ----
@@ -70,6 +83,7 @@ jobs:
           bash packaging/linux/build-appimage.sh
           test -f dist/MidChip-x86_64.AppImage
           chmod +x dist/MidChip-x86_64.AppImage
+          mv dist/MidChip-x86_64.AppImage dist/MidChip-linux-setup.AppImage
 
       - name: Build .app installer (macOS)
         if: runner.os == 'macOS'
@@ -110,21 +124,23 @@ jobs:
             exit 1
           }
 
+          Move-Item "dist\midchip-windows-setup.exe" "dist\MidChip-windows-setup.exe"
+
       # ---- upload installer artifacts ----
 
       - name: Upload installer artifact (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: midchip-linux-installer
-          path: dist/MidChip-x86_64.AppImage
+          name: MidChip-linux-setup.AppImage
+          path: dist/MidChip-linux-setup.AppImage
           if-no-files-found: error
 
       - name: Upload installer artifact (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: midchip-macos-installer
+          name: MidChip-macos-installer.zip
           path: dist/MidChip-macos-installer.zip
           if-no-files-found: error
 
@@ -132,8 +148,8 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: midchip-windows-installer
-          path: dist/midchip-windows-setup.exe
+          name: MidChip-windows-setup.exe
+          path: dist/MidChip-windows-setup.exe
           if-no-files-found: error
 
 
@@ -145,10 +161,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Download installer artifacts
+      - name: Download all release assets
         uses: actions/download-artifact@v4
         with:
-          pattern: midchip-*-installer
+          pattern: "MidChip-*"
           path: dist
           merge-multiple: true
 
@@ -159,7 +175,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/MidChip-x86_64.AppImage
+            dist/MidChip-linux-setup.AppImage
+            dist/MidChip-linux-standalone.zip
             dist/MidChip-macos-installer.zip
-            dist/midchip-windows-setup.exe
+            dist/MidChip-macos-standalone.zip
+            dist/MidChip-windows-setup.exe
+            dist/MidChip-windows-standalone.zip
           token: ${{ secrets.GITHUB_TOKEN }}
